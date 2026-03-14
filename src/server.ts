@@ -22,20 +22,27 @@ export function createServer(config: Config, github: GithubClient, glitchtip: Gl
   const handleWebhook = createWebhookHandler(config, github, glitchtip)
 
   const server = createHttpServer(async (req, res) => {
-    const url = new URL(req.url ?? '/', `http://localhost:${config.port}`)
+    try {
+      const url = new URL(req.url ?? '/', `http://localhost:${config.port}`)
 
-    if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { status: 'ok' })
+      if (req.method === 'GET' && url.pathname === '/health') {
+        return json(res, 200, { status: 'ok' })
+      }
+
+      if (req.method === 'POST' && url.pathname === '/webhook') {
+        const rawBody = await readBody(req)
+        const secret = url.searchParams.get('secret') ?? ''
+        const result = await handleWebhook(rawBody, secret)
+        return json(res, result.status, result.body)
+      }
+
+      json(res, 404, { error: 'not found' })
+    } catch (err) {
+      console.error('Unhandled request error:', (err as Error).message)
+      if (!res.headersSent) {
+        json(res, 500, { error: 'internal server error' })
+      }
     }
-
-    if (req.method === 'POST' && url.pathname === '/webhook') {
-      const rawBody = await readBody(req)
-      const secret = url.searchParams.get('secret') ?? ''
-      const result = await handleWebhook(rawBody, secret)
-      return json(res, result.status, result.body)
-    }
-
-    json(res, 404, { error: 'not found' })
   })
 
   return server

@@ -46,13 +46,18 @@ export function createGithubClient(config: GithubClientConfig): GithubClient {
     body: string,
     labels: string[],
   ): Promise<GitHubCreateResult> {
-    const res = await fetch(`${GITHUB_API}/repos/${config.githubRepo}/issues`, {
-      method: 'POST',
-      headers: { ...headers, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, body, labels }),
-    })
-    const data = await res.json().catch(() => null)
-    return { ok: res.ok, status: res.status, data }
+    try {
+      const res = await fetch(`${GITHUB_API}/repos/${config.githubRepo}/issues`, {
+        method: 'POST',
+        headers: { ...headers, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, body, labels }),
+      })
+      const data = await res.json().catch(() => null)
+      return { ok: res.ok, status: res.status, data }
+    } catch (err) {
+      console.error('GitHub create issue failed:', (err as Error).message)
+      return { ok: false, status: 0, data: null }
+    }
   }
 
   return { isDuplicate, createIssue }

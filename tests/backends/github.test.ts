@@ -100,5 +100,16 @@ describe('GitHub client', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(404)
     })
+
+    it('returns error result on network failure', async () => {
+      vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('DNS resolution failed'))
+
+      const client = createGithubClient(config)
+      const result = await client.createIssue('Title', 'body', ['bug'])
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(0)
+      expect(result.data).toBeNull()
+    })
   })
 })
