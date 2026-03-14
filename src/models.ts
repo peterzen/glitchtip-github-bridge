@@ -71,13 +71,11 @@ export function parseAttachments(payload: WebhookPayload): ParsedAttachment[] {
 
 // --- GlitchTip issue schema ---
 
-export const GlitchtipIssueSchema = z
-  .object({
-    count: z.number(),
-    firstSeen: z.string(),
-    lastSeen: z.string(),
-  })
-  .passthrough()
+export const GlitchtipIssueSchema = z.looseObject({
+  count: z.number(),
+  firstSeen: z.string(),
+  lastSeen: z.string(),
+})
 
 export type GlitchtipIssue = z.infer<typeof GlitchtipIssueSchema>
 
@@ -119,7 +117,7 @@ export const RawCspEntrySchema = z.object({
 
 const RawEventEntrySchema = z
   .discriminatedUnion('type', [RawExceptionEntrySchema, RawCspEntrySchema])
-  .or(z.object({ type: z.string() }).passthrough())
+  .or(z.looseObject({ type: z.string() }))
 
 export const RawGlitchtipEventSchema = z.object({
   culprit: z.string().optional(),
