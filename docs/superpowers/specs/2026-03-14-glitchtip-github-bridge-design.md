@@ -80,26 +80,28 @@ All schemas defined in `src/models.ts`. TypeScript types inferred via `z.infer<>
 
 ### Inbound: Webhook Payload
 
+GlitchTip sends Slack-compatible webhook payloads. Most fields are optional — only `title` and `title_link` on attachments are required for processing. Unknown fields are stripped by Zod's default behavior (intentional — we only parse what we use).
+
 ```typescript
 const WebhookFieldSchema = z.object({
   title: z.string(),
   value: z.string(),
-  short: z.boolean(),
+  short: z.boolean().optional(),
 })
 
 const WebhookAttachmentSchema = z.object({
   title: z.string(),
   title_link: z.string(),
-  text: z.string(),
-  color: z.string(),
-  image_url: z.string(),
-  fields: z.array(WebhookFieldSchema),
+  text: z.string().optional(),
+  color: z.string().optional(),
+  image_url: z.string().optional(),
+  fields: z.array(WebhookFieldSchema).optional(),
 })
 
 const WebhookPayloadSchema = z.object({
-  alias: z.string(),
-  text: z.string(),
-  attachments: z.array(WebhookAttachmentSchema),
+  alias: z.string().optional(),
+  text: z.string().optional(),
+  attachments: z.array(WebhookAttachmentSchema).optional(),
 })
 ```
 
@@ -120,46 +122,108 @@ const ParsedAttachmentSchema = z.object({
 
 ### GlitchTip API Responses
 
+The GlitchTip API returns Sentry-compatible formats. We define schemas for both the raw API response and the normalized internal representation.
+
+**Issue metadata** — only the fields we use; validated with `.passthrough()` so extra fields don't cause failures:
+
 ```typescript
 const GlitchtipIssueSchema = z.object({
   count: z.number(),
   firstSeen: z.string(),
   lastSeen: z.string(),
+}).passthrough()
+```
+
+**Event — raw API response format (Sentry-compatible):**
+
+The event API returns an `entries` array where each entry has a `type` discriminator and a `data` payload. The two entry types we care about are `exception` and `csp`:
+
+```typescript
+const RawStackFrameSchema = z.object({
+  function: z.string().optional(),
+  filename: z.string().optional(),
+  lineNo: z.number().optional(),
+  colNo: z.number().optional(),
 })
 
-const StackFrameSchema = z.object({
-  function: z.string(),
-  filename: z.string(),
-  lineNo: z.number(),
-  colNo: z.number(),
-})
-
-const ExceptionValueSchema = z.object({
+const RawExceptionValueSchema = z.object({
   type: z.string(),
   value: z.string(),
-  stacktrace: z.object({ frames: z.array(StackFrameSchema) }),
+  stacktrace: z.object({
+    frames: z.array(RawStackFrameSchema),
+  }).optional(),
 })
 
-const CspDataSchema = z.object({
-  effective_directive: z.string(),
-  blocked_uri: z.string(),
-  document_uri: z.string(),
-  disposition: z.string(),
+const RawExceptionEntrySchema = z.object({
+  type: z.literal('exception'),
+  data: z.object({
+    values: z.array(RawExceptionValueSchema),
+  }),
 })
 
-const GlitchtipEventSchema = z.object({
-  culprit: z.string(),
-  tags: z.array(z.object({ key: z.string(), value: z.string() })),
-  exceptions: z.array(ExceptionValueSchema),
-  csp: CspDataSchema.nullable(),
+const RawCspEntrySchema = z.object({
+  type: z.literal('csp'),
+  data: z.object({
+    effective_directive: z.string().optional(),
+    blocked_uri: z.string().optional(),
+    document_uri: z.string().optional(),
+    disposition: z.string().optional(),
+  }),
+})
+
+const RawEventEntrySchema = z.discriminatedUnion('type', [
+  RawExceptionEntrySchema,
+  RawCspEntrySchema,
+]).or(z.object({ type: z.string() }).passthrough())  // ignore unknown entry types
+
+const RawGlitchtipEventSchema = z.object({
+  culprit: z.string().optional(),
+  tags: z.array(z.object({ key: z.string(), value: z.string() })).optional(),
+  entries: z.array(RawEventEntrySchema).optional(),
 })
 ```
 
+**Event — normalized internal representation:**
+
+The `glitchtip.ts` backend normalizes the raw event into this shape before returning:
+
+```typescript
+interface GlitchtipEvent {
+  culprit: string | undefined
+  tags: Array<{ key: string; value: string }>
+  exceptions: Array<{
+    type: string
+    value: string
+    stacktrace?: {
+      frames: Array<{
+        function?: string
+        filename?: string
+        lineNo?: number
+        colNo?: number
+      }>
+    }
+  }>
+  csp: {
+    effective_directive?: string
+    blocked_uri?: string
+    document_uri?: string
+    disposition?: string
+  } | null
+}
+```
+
+**Normalization logic** (in `backends/glitchtip.ts`):
+1. Parse raw JSON with `RawGlitchtipEventSchema.safeParse()`. Return `null` on failure.
+2. Find the entry with `type === 'exception'` → extract `data.values` as `exceptions`.
+3. Find the entry with `type === 'csp'` → extract `data` as `csp`, or `null` if absent.
+4. Lift `culprit` and `tags` from the top level (defaulting to `undefined` / `[]`).
+5. Return the normalized `GlitchtipEvent` object.
+
 ### Validation Strategy
 
-- **Webhook input:** Validated with `WebhookPayloadSchema.parse()` at the API boundary. Invalid payloads return 400.
-- **GlitchTip API responses:** Validated with `.safeParse()` after fetch. The raw Sentry-format `entries` array is normalized into structured `exceptions` and `csp` fields before validation. If validation fails, the client returns `null`.
-- **Parsed attachments:** Constructed programmatically from validated webhook data. Attachments missing `title`, `title_link`, or a valid issue ID regex match are skipped during parsing.
+- **Webhook input:** Validated with `WebhookPayloadSchema.safeParse()` at the API boundary. Invalid payloads return 400.
+- **GlitchTip API responses:** Validated with `RawGlitchtipEventSchema.safeParse()` / `GlitchtipIssueSchema.safeParse()` after fetch. On failure, the client returns `null` and logs the error. The raw event is then normalized into the internal `GlitchtipEvent` shape (see normalization logic above).
+- **Parsed attachments:** Constructed programmatically from validated webhook data. Attachments missing `title`, `title_link`, or a valid issue ID regex match (`/\/issues\/(\d+)/`) are skipped entirely during parsing. For attachments that pass these checks, missing `fields` entries default to empty strings (e.g., if no `serverName` field is present, `serverName` becomes `""`). An empty `attachments` array (or omitted `attachments`) results in a 200 response with an empty `results` array.
 
 ## Module Responsibilities
 
@@ -169,35 +233,53 @@ const GlitchtipEventSchema = z.object({
 2. Parses JSON body, validates against `WebhookPayloadSchema`
 3. Extracts attachments via `parseAttachments()` — regex for issue ID, field extraction into `ParsedAttachment`
 4. For each valid attachment:
-   - Checks for duplicate via `isDuplicate()`
-   - If not duplicate, calls `createGithubIssue()` which enriches via GlitchTip API then creates the issue
+   - Checks for duplicate via `isDuplicate()`, which returns `false` on API error (fail-open — better to risk a duplicate than silently drop an alert). Error handling is internal to `isDuplicate()`; the webhook handler does not need to catch exceptions from it.
+   - If not duplicate, enriches via GlitchTip API then creates the GitHub Issue
 5. Returns JSON response with per-attachment results and summary
-6. HTTP status: 201 if any created, 200 if all duplicates, 502 if all errors
+
+**Response format:**
+```json
+{
+  "results": [
+    { "glitchtipIssueId": "123", "status": "created", "issue": "https://github.com/owner/repo/issues/42" },
+    { "glitchtipIssueId": "456", "status": "duplicate" },
+    { "glitchtipIssueId": "789", "status": "error" }
+  ],
+  "summary": { "created": 1, "duplicates": 1, "errors": 1 }
+}
+```
+
+**HTTP status:** 201 if any created, 200 if all duplicates, 502 if all errors and none created.
+
+**GitHub Issue title format:** `[GlitchTip] <attachment.errorTitle>`
+
+**Default labels:** `['bug', 'glitchtip']` — the `glitchtip` label is required for deduplication search to work.
 
 ### `src/backends/github.ts` — GitHub API client
 
-- `isDuplicate(issueId: string): Promise<boolean>` — searches GitHub Issues for `<!-- glitchtip-id:XXXX -->` marker with `glitchtip` label
+- `isDuplicate(issueId: string): Promise<boolean>` — searches GitHub Issues with query `repo:{GITHUB_REPO} "glitchtip-id:{issueId}" label:glitchtip`. Returns `false` on API error (fail-open).
 - `createIssue(title: string, body: string, labels: string[]): Promise<GitHubCreateResult>` — creates a GitHub Issue via REST API
 - Uses `fetch` with `Authorization: Bearer` header, `X-GitHub-Api-Version: 2022-11-28`
 
 ### `src/backends/glitchtip.ts` — GlitchTip API client
 
-- `fetchIssue(issueId: string): Promise<GlitchtipIssue | null>` — fetches `/api/0/issues/{id}/`, validates with `GlitchtipIssueSchema`
-- `fetchLatestEvent(issueId: string): Promise<GlitchtipEvent | null>` — fetches `/api/0/issues/{id}/events/latest/`, normalizes `entries` array into `exceptions`/`csp`, validates with `GlitchtipEventSchema`
-- Both called concurrently via `Promise.all`
+- `fetchIssue(issueId: string): Promise<GlitchtipIssue | null>` — fetches `/api/0/issues/{id}/`, validates with `GlitchtipIssueSchema.safeParse()`. Returns `null` on HTTP error or validation failure.
+- `fetchLatestEvent(issueId: string): Promise<GlitchtipEvent | null>` — fetches `/api/0/issues/{id}/events/latest/`, validates raw response with `RawGlitchtipEventSchema.safeParse()`, then normalizes into `GlitchtipEvent`. Returns `null` on failure.
+- Both called concurrently via `Promise.all`. **Enrichment failure does not prevent issue creation** — the formatter handles null issue/event by omitting the corresponding sections.
 
 ### `src/formatters.ts` — Markdown body builder
 
 - `buildErrorBody(attachment: ParsedAttachment, issue: GlitchtipIssue | null, event: GlitchtipEvent | null): string`
 - Produces the GitHub Issue markdown body with:
   - Header table (project, environment, release, component, occurrences, first/last seen, server)
-  - Tags table (filtered to exclude release/environment)
-  - Stacktrace (formatted with reversed frames for natural reading)
-  - CSP violation details (if present)
+  - Tags table (filtered to exclude `release` and `environment` tags)
+  - Stacktrace (frames reversed from Sentry's bottom-up order to natural top-down reading; missing frame fields default to `<anonymous>` / `<unknown>`)
+  - CSP violation details (if `csp` is non-null)
   - Context quote from webhook
   - GlitchTip link
   - HTML comment marker for deduplication: `<!-- glitchtip-id:XXXX -->`
-- `issue` and `event` params are nullable to handle failed enrichment gracefully — sections are omitted when data is unavailable
+- `issue` and `event` params are nullable — sections sourced from enrichment data are omitted when data is unavailable
+- Dates formatted as `YYYY-MM-DD HH:MM:SS UTC` via a `formatDate()` helper
 
 ### `src/server.ts` — HTTP server
 
@@ -229,7 +311,7 @@ const GlitchtipEventSchema = z.object({
 
 - **Stage 1 (builder):** `node:22-slim`, installs all deps, compiles TypeScript via `npm run build`
 - **Stage 2 (runtime):** `node:22-slim`, installs production deps only, copies compiled `dist/`, runs `node dist/index.js`
-- Built-in healthcheck via `fetch('http://localhost:3001/health')`
+- Built-in healthcheck: `node -e "fetch('http://localhost:3001/health').then(r => process.exit(r.ok ? 0 : 1))"`
 
 ### docker-compose.yml
 
