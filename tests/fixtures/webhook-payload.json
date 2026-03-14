@@ -1,0 +1,19 @@
+{
+  "alias": "GlitchTip",
+  "text": "",
+  "attachments": [
+    {
+      "title": "TypeError: Cannot read properties of undefined (reading 'map')",
+      "title_link": "https://log.example.com/my-org/issues/42",
+      "text": "Error in data processing pipeline",
+      "color": "#e52b50",
+      "image_url": "https://log.example.com/chart.png",
+      "fields": [
+        { "title": "Project", "value": "my-app", "short": true },
+        { "title": "Environment", "value": "production", "short": true },
+        { "title": "Release", "value": "1.2.3", "short": true },
+        { "title": "Server Name", "value": "web-01", "short": true }
+      ]
+    }
+  ]
+}

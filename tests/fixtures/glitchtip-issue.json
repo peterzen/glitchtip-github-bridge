@@ -1,0 +1,7 @@
+{
+  "count": 15,
+  "firstSeen": "2026-03-10T08:30:00.000Z",
+  "lastSeen": "2026-03-14T14:22:00.000Z",
+  "title": "TypeError: Cannot read properties of undefined",
+  "metadata": { "type": "TypeError" }
+}

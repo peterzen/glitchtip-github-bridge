@@ -1,0 +1,29 @@
+{
+  "culprit": "app/utils/data.ts in processItems",
+  "tags": [
+    { "key": "browser", "value": "Chrome 120" },
+    { "key": "os", "value": "Linux" },
+    { "key": "release", "value": "1.2.3" },
+    { "key": "environment", "value": "production" },
+    { "key": "url", "value": "https://example.com/dashboard" }
+  ],
+  "entries": [
+    {
+      "type": "exception",
+      "data": {
+        "values": [
+          {
+            "type": "TypeError",
+            "value": "Cannot read properties of undefined (reading 'map')",
+            "stacktrace": {
+              "frames": [
+                { "function": "processItems", "filename": "app/utils/data.ts", "lineNo": 42, "colNo": 15 },
+                { "function": "handleRequest", "filename": "app/handlers/api.ts", "lineNo": 87, "colNo": 5 }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
