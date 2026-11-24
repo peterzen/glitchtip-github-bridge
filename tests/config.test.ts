@@ -22,7 +22,7 @@ describe('loadConfig', () => {
 
     const config = loadConfig()
 
-    expect(config.githubToken).toBe('ghp_test123')
+    expect(config.githubAuth).toEqual({ kind: 'token', token: 'ghp_test123' })
     expect(config.githubRepo).toBe('owner/repo')
     expect(config.glitchtipApiUrl).toBe('http://web:8000')
     expect(config.glitchtipApiToken).toBe('gt_token')
@@ -58,5 +58,47 @@ describe('loadConfig', () => {
     expect(() => {
       ;(config as any).port = 9999
     }).toThrow()
+  })
+
+  describe('GitHub App auth', () => {
+    function setBase() {
+      process.env.GITHUB_REPO = 'owner/repo'
+      process.env.GLITCHTIP_API_URL = 'http://web:8000'
+      process.env.GLITCHTIP_API_TOKEN = 'gt_token'
+      delete process.env.GITHUB_TOKEN
+    }
+
+    it('loads app credentials, unescaping newlines in the private key', () => {
+      setBase()
+      process.env.GITHUB_APP_ID = '123'
+      process.env.GITHUB_APP_INSTALLATION_ID = '456'
+      process.env.GITHUB_APP_PRIVATE_KEY = '-----BEGIN KEY-----\\nabc\\n-----END KEY-----'
+
+      expect(loadConfig().githubAuth).toEqual({
+        kind: 'app',
+        appId: '123',
+        installationId: '456',
+        privateKey: '-----BEGIN KEY-----\nabc\n-----END KEY-----',
+      })
+    })
+
+    it('requires the installation id and private key with an app id', () => {
+      setBase()
+      process.env.GITHUB_APP_ID = '123'
+      expect(() => loadConfig()).toThrow('GITHUB_APP_INSTALLATION_ID')
+    })
+
+    it('rejects a token and an app id together rather than picking one', () => {
+      setBase()
+      process.env.GITHUB_TOKEN = 'ghp_test123'
+      process.env.GITHUB_APP_ID = '123'
+      expect(() => loadConfig()).toThrow('not both')
+    })
+
+    it('requires GITHUB_TOKEN without an app id', () => {
+      setBase()
+      delete process.env.GITHUB_APP_ID
+      expect(() => loadConfig()).toThrow('GITHUB_TOKEN')
+    })
   })
 })

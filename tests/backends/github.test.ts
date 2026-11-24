@@ -2,10 +2,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { createGithubClient } from '../../src/backends/github.js'
 
 describe('GitHub client', () => {
-  const config = {
-    githubToken: 'ghp_test123',
-    githubRepo: 'owner/repo',
-  }
+  const config = { githubRepo: 'owner/repo' }
+  const getToken = async () => 'ghp_test123'
 
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -17,7 +15,7 @@ describe('GitHub client', () => {
         new Response(JSON.stringify({ total_count: 1 }), { status: 200 }),
       )
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.isDuplicate('42')
 
       expect(result).toBe(true)
@@ -37,7 +35,7 @@ describe('GitHub client', () => {
         new Response(JSON.stringify({ total_count: 0 }), { status: 200 }),
       )
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.isDuplicate('42')
 
       expect(result).toBe(false)
@@ -46,7 +44,7 @@ describe('GitHub client', () => {
     it('returns false on API error (fail-open)', async () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network error'))
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.isDuplicate('42')
 
       expect(result).toBe(false)
@@ -57,11 +55,23 @@ describe('GitHub client', () => {
         new Response('Forbidden', { status: 403 }),
       )
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.isDuplicate('42')
 
       expect(result).toBe(false)
     })
+  })
+
+  it('creates an issue as "not ok" when no token can be obtained', async () => {
+    vi.spyOn(globalThis, 'fetch')
+    const client = createGithubClient(config, async () => {
+      throw new Error('GitHub App token request failed: 401')
+    })
+
+    const result = await client.createIssue('Title', 'body', ['bug'])
+
+    expect(result).toEqual({ ok: false, status: 0, data: null })
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   describe('createIssue', () => {
@@ -71,7 +81,7 @@ describe('GitHub client', () => {
         new Response(JSON.stringify(ghResponse), { status: 201 }),
       )
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.createIssue('[GlitchTip] Error', 'body', ['bug', 'glitchtip'])
 
       expect(result.ok).toBe(true)
@@ -94,7 +104,7 @@ describe('GitHub client', () => {
         new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 }),
       )
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.createIssue('Title', 'body', ['bug'])
 
       expect(result.ok).toBe(false)
@@ -104,7 +114,7 @@ describe('GitHub client', () => {
     it('returns error result on network failure', async () => {
       vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('DNS resolution failed'))
 
-      const client = createGithubClient(config)
+      const client = createGithubClient(config, getToken)
       const result = await client.createIssue('Title', 'body', ['bug'])
 
       expect(result.ok).toBe(false)

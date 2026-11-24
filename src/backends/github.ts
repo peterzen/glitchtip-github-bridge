@@ -1,5 +1,6 @@
+import type { TokenProvider } from './githubAuth.js'
+
 interface GithubClientConfig {
-  githubToken: string
   githubRepo: string
 }
 
@@ -16,11 +17,16 @@ export interface GithubClient {
 
 const GITHUB_API = 'https://api.github.com'
 
-export function createGithubClient(config: GithubClientConfig): GithubClient {
-  const headers = {
-    Authorization: `Bearer ${config.githubToken}`,
-    Accept: 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
+export function createGithubClient(
+  config: GithubClientConfig,
+  getToken: TokenProvider,
+): GithubClient {
+  async function headers(): Promise<Record<string, string>> {
+    return {
+      Authorization: `Bearer ${await getToken()}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    }
   }
 
   async function isDuplicate(issueId: string): Promise<boolean> {
@@ -30,7 +36,7 @@ export function createGithubClient(config: GithubClientConfig): GithubClient {
       )
       const res = await fetch(`${GITHUB_API}/search/issues?q=${q}`, {
         method: 'GET',
-        headers,
+        headers: await headers(),
       })
       if (!res.ok) return false
       const data = await res.json()
@@ -49,7 +55,7 @@ export function createGithubClient(config: GithubClientConfig): GithubClient {
     try {
       const res = await fetch(`${GITHUB_API}/repos/${config.githubRepo}/issues`, {
         method: 'POST',
-        headers: { ...headers, 'Content-Type': 'application/json' },
+        headers: { ...(await headers()), 'Content-Type': 'application/json' },
         body: JSON.stringify({ title, body, labels }),
       })
       const data = await res.json().catch(() => null)

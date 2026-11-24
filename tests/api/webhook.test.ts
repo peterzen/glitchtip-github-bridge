@@ -7,7 +7,7 @@ import webhookPayload from '../fixtures/webhook-payload.json'
 
 function mockConfig(overrides: Partial<Config> = {}): Config {
   return {
-    githubToken: 'ghp_test',
+    githubAuth: { kind: 'token' as const, token: 'ghp_test' },
     githubRepo: 'owner/repo',
     glitchtipApiUrl: 'http://web:8000',
     glitchtipApiToken: 'gt_token',
